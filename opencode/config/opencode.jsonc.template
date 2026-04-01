@@ -1,0 +1,73 @@
+{
+  // Schema: https://opencode.ai/config.json
+  "$schema": "https://opencode.ai/config.json",
+
+  // Default models: provider_id/model_id as shown in `opencode models`
+  "model": "local-a/primary-model",
+  "small_model": "local-b/light-model",
+
+  // Restrict to your local providers only (adjust IDs to match `provider` keys below)
+  "enabled_providers": ["local-a", "local-b"],
+
+  // When using the gateway pattern instead, comment out direct providers and use:
+  // "enabled_providers": ["gateway"],
+  // "model": "gateway/routed-model-name",
+
+  "provider": {
+    // -------------------------------------------------------------------------
+    // Pattern A — Multiple direct OpenAI-compatible endpoints
+    // Each key is a provider_id; baseURL must include /v1 for chat completions API.
+    // -------------------------------------------------------------------------
+    "local-a": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Local endpoint A",
+      "options": {
+        "baseURL": "https://llm-a.internal.example:8443/v1",
+        "apiKey": "{env:LOCAL_A_API_KEY}"
+        // Optional extra headers:
+        // "headers": { "X-Custom-Auth": "{env:LOCAL_A_EXTRA_HEADER}" }
+      },
+      "models": {
+        "primary-model": {
+          "name": "Primary (local A)",
+          "limit": { "context": 128000, "output": 8192 }
+        }
+      }
+    },
+
+    "local-b": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Local endpoint B",
+      "options": {
+        "baseURL": "https://llm-b.internal.example:8443/v1",
+        "apiKey": "{env:LOCAL_B_API_KEY}"
+      },
+      "models": {
+        "light-model": {
+          "name": "Light / fast (local B)"
+        }
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Pattern B — Single gateway (uncomment and merge; remove duplicate commas)
+    // -------------------------------------------------------------------------
+    // "gateway": {
+    //   "npm": "@ai-sdk/openai-compatible",
+    //   "name": "Internal LLM gateway",
+    //   "options": {
+    //     "baseURL": "https://gateway.internal.example/v1",
+    //     "apiKey": "{env:GATEWAY_API_KEY}"
+    //   },
+    //   "models": {
+    //     "routed-model-name": { "name": "Via gateway" }
+    //   }
+    // }
+  },
+
+  // Future: npm plugins (installed by OpenCode via Bun at startup)
+  "plugin": []
+
+  // Optional: disable cloud providers from auto-loading if keys exist elsewhere
+  // "disabled_providers": ["openai", "anthropic", "gemini"]
+}
