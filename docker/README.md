@@ -49,11 +49,12 @@ Installs the same Docker CE packages plus rootless support, turns off the rootfu
 **What it does:**
 
 1. Same cleanup and repository setup as `setup.sh`
-2. Installs rootless extras and dependencies (`docker-ce-rootless-extras`, `shadow-utils`, `slirp4netns`, `dbus-user-session`)
+2. Installs rootless extras and dependencies (`docker-ce-rootless-extras`, `shadow-utils`, `slirp4netns`, `dbus-daemon`, `systemd-container`)
 3. Disables `docker.service` and `docker.socket` (rootless does not use `/var/run/docker.sock`)
 4. Ensures `user.max_user_namespaces` and subuid/subgid mappings for the target user
-5. Runs `dockerd-rootless-setuptool.sh install` as that user
-6. Enables **linger** by default so the user daemon can start at boot without an interactive login
+5. Enables **linger** by default (before setuptool) and starts the target user’s `user@.service` so `/run/user/<uid>` exists
+6. Runs `dockerd-rootless-setuptool.sh install` via `machinectl shell` (a real login session; `runuser`/`sudo` cannot see systemd)
+7. Enables and starts `docker.service` under `systemctl --user` for that user
 
 **Usage:**
 
@@ -70,16 +71,55 @@ ENABLE_LINGER=0 sudo bash setup-rootless.sh alice
 
 **After install (as the target user):**
 
+- Log in via **SSH** or the graphical console (not `sudo su` / `sudo -i`)
 - Control the daemon: `systemctl --user start|stop|restart docker`
-- Socket: `unix:///run/user/<uid>/docker.sock` (the script prints the exact `DOCKER_HOST` value)
+- Socket (normal path): `unix:///run/user/<uid>/docker.sock` (the script prints the exact `DOCKER_HOST` value)
 - If the CLI does not pick up rootless automatically, add to `~/.bashrc`:
   ```bash
   export DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock
   ```
 - Test: `docker run hello-world`
-- Confirm rootless mode: `docker info` should show `rootless` under security options
+- Confirm rootless mode: `docker info` should show `rootless` under security options and a populated **Server** section
 
 Official reference: [Docker rootless mode](https://docs.docker.com/engine/security/rootless/).
+
+If `systemctl --user` reports **Failed to connect to bus**, log in again via SSH or the graphical console (not `sudo su` / `sudo -i`), then as the target user run `systemctl --user enable --now dbus` (or `dbus-broker` if that is the active user unit). See [Docker rootless troubleshooting](https://docs.docker.com/engine/security/rootless/troubleshoot/).
+
+If setuptool fell back to non-systemd mode (socket under `~/.docker/run/`), see **Recovery** below.
+
+### Recovery (broken or partial install)
+
+Use this if a previous run printed `systemd not detected`, `docker.service not found`, or `docker ps` cannot connect.
+
+1. Uninstall the old rootless setup. As the target user over SSH:
+
+   ```bash
+   dockerd-rootless-setuptool.sh uninstall
+   ```
+
+   If that fails (no user bus), as root:
+
+   ```bash
+   machinectl shell lab03@ /bin/bash -lc 'dockerd-rootless-setuptool.sh uninstall'
+   ```
+
+   (Replace `lab03` with your username.)
+
+2. Re-run the updated script:
+
+   ```bash
+   sudo ./setup-rootless.sh lab03
+   ```
+
+3. Confirm (as the target user):
+
+   ```bash
+   systemctl --user status docker
+   docker info
+   docker run hello-world
+   ```
+
+   Expect `docker.service` active, socket at `unix:///run/user/$(id -u)/docker.sock`, and `docker info` showing `rootless` with a running server.
 
 ## Choosing rootful vs rootless
 
