@@ -49,7 +49,7 @@ dnf install -y \
     docker-ce-rootless-extras \
     shadow-utils \
     slirp4netns \
-    dbus-user-session
+    dbus-daemon
 
 echo "Step 5: Disabling rootful Docker (rootless uses a per-user daemon)..."
 systemctl disable --now docker.service docker.socket 2>/dev/null || true

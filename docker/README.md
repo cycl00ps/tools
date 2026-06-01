@@ -49,7 +49,7 @@ Installs the same Docker CE packages plus rootless support, turns off the rootfu
 **What it does:**
 
 1. Same cleanup and repository setup as `setup.sh`
-2. Installs rootless extras and dependencies (`docker-ce-rootless-extras`, `shadow-utils`, `slirp4netns`, `dbus-user-session`)
+2. Installs rootless extras and dependencies (`docker-ce-rootless-extras`, `shadow-utils`, `slirp4netns`, `dbus-daemon`)
 3. Disables `docker.service` and `docker.socket` (rootless does not use `/var/run/docker.sock`)
 4. Ensures `user.max_user_namespaces` and subuid/subgid mappings for the target user
 5. Runs `dockerd-rootless-setuptool.sh install` as that user
@@ -80,6 +80,8 @@ ENABLE_LINGER=0 sudo bash setup-rootless.sh alice
 - Confirm rootless mode: `docker info` should show `rootless` under security options
 
 Official reference: [Docker rootless mode](https://docs.docker.com/engine/security/rootless/).
+
+If `systemctl --user` reports **Failed to connect to bus**, log in again via SSH or the graphical console (not `sudo su` / `sudo -i`), then as the target user run `systemctl --user enable --now dbus` (or `dbus-broker` if that is the active user unit). See [Docker rootless troubleshooting](https://docs.docker.com/engine/security/rootless/troubleshoot/).
 
 ## Choosing rootful vs rootless
 
