@@ -74,6 +74,39 @@ detect_docker_host() {
     fi
 }
 
+# RHEL/AlmaLinux 10 ship iptables-nft but omit legacy xt_* modules from the base kernel
+# package. Docker's bridge driver needs xt_addrtype (in kernel-modules-extra).
+ensure_iptables_kernel_modules() {
+    local kver module_path
+    kver="$(uname -r)"
+    module_path="/lib/modules/${kver}/kernel/net/netfilter/xt_addrtype.ko"
+
+    echo "Step 6a: Ensuring iptables kernel modules for kernel ${kver}..."
+
+    if [ ! -f "${module_path}" ] && [ ! -f "${module_path}.xz" ]; then
+        echo "Installing kernel-modules-extra for the running kernel..."
+        if ! dnf install -y "kernel-modules-extra-${kver}"; then
+            dnf install -y kernel-modules-extra
+        fi
+    fi
+
+    if [ ! -f "${module_path}" ] && [ ! -f "${module_path}.xz" ]; then
+        echo "ERROR: xt_addrtype is not available for kernel ${kver}."
+        echo "  Install kernel-modules-extra-${kver}, or reboot into a kernel that has it."
+        exit 1
+    fi
+
+    if ! modprobe xt_addrtype 2>/dev/null; then
+        echo "ERROR: failed to load xt_addrtype (required for Docker networking)."
+        exit 1
+    fi
+
+    mkdir -p /etc/modules-load.d
+    if [ ! -f /etc/modules-load.d/docker-iptables.conf ]; then
+        echo xt_addrtype >/etc/modules-load.d/docker-iptables.conf
+    fi
+}
+
 echo "Step 1: Removing old Docker versions (if any)..."
 dnf remove -y docker docker-client docker-client-latest docker-common docker-latest docker-latest-logrotate docker-logrotate docker-engine 2>/dev/null || true
 
@@ -118,6 +151,8 @@ if ! grep -q "^${TARGET_USER}:" /etc/subgid 2>/dev/null; then
     echo "Assigned subgids 100000-165535 to $TARGET_USER"
 fi
 
+ensure_iptables_kernel_modules
+
 echo "Step 6b: Preparing systemd user session for $TARGET_USER..."
 ensure_user_systemd_session
 
@@ -134,14 +169,24 @@ if echo "$SETUP_OUTPUT" | grep -q 'systemd not detected'; then
 fi
 
 echo "Step 8: Enabling and starting rootless Docker (user systemd units)..."
-run_as_target_user '
+if ! run_as_target_user '
     systemctl --user enable --now dbus 2>/dev/null \
         || systemctl --user enable --now dbus-broker 2>/dev/null \
         || true
     systemctl --user enable --now docker
-'
+'; then
+    echo "ERROR: Failed to start docker.service for $TARGET_USER."
+    run_as_target_user 'journalctl -n 30 --no-pager --user --unit docker.service' || true
+    exit 1
+fi
 
 DOCKER_HOST="$(detect_docker_host)"
+
+if ! run_as_target_user "export DOCKER_HOST='${DOCKER_HOST}'; systemctl --user is-active --quiet docker"; then
+    echo "ERROR: docker.service is not active after install."
+    run_as_target_user 'journalctl -n 30 --no-pager --user --unit docker.service' || true
+    exit 1
+fi
 
 echo "========================================="
 echo "Rootless Docker installation complete!"
@@ -162,7 +207,10 @@ echo "If DOCKER_HOST is not set automatically, add to ~/.bashrc:"
 echo "  export DOCKER_HOST=$DOCKER_HOST"
 echo ""
 echo "Verifying installation (as $TARGET_USER)..."
-run_as_target_user "docker --version && docker compose version && docker info 2>/dev/null | head -25"
+if ! run_as_target_user "export DOCKER_HOST='${DOCKER_HOST}'; docker --version && docker compose version && docker info 2>/dev/null | head -25"; then
+    echo "ERROR: docker info failed. Check DOCKER_HOST=${DOCKER_HOST} and daemon logs above."
+    exit 1
+fi
 echo ""
 echo "To test rootless Docker (as $TARGET_USER):"
 echo "  docker run hello-world"
