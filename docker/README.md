@@ -17,6 +17,7 @@ Both scripts require **root** (e.g. `sudo`). They use `dnf`, add `https://downlo
 - Root or `sudo`
 - Outbound network access to Docker’s package repository
 - For rootless: a normal login user account (not only `root`)
+- For rootless on AlmaLinux/RHEL 10: **`kernel-modules-extra` for the running kernel** (provides `xt_addrtype`, which Docker’s bridge networking needs). After a kernel update, either reboot into the new kernel or install `kernel-modules-extra-$(uname -r)` before installing Docker.
 
 ## Rootful install (`setup.sh`)
 
@@ -52,9 +53,10 @@ Installs the same Docker CE packages plus rootless support, turns off the rootfu
 2. Installs rootless extras and dependencies (`docker-ce-rootless-extras`, `shadow-utils`, `slirp4netns`, `dbus-daemon`, `systemd-container`)
 3. Disables `docker.service` and `docker.socket` (rootless does not use `/var/run/docker.sock`)
 4. Ensures `user.max_user_namespaces` and subuid/subgid mappings for the target user
-5. Enables **linger** by default (before setuptool) and starts the target user’s `user@.service` so `/run/user/<uid>` exists
-6. Runs `dockerd-rootless-setuptool.sh install` via `machinectl shell` (a real login session; `runuser`/`sudo` cannot see systemd)
-7. Enables and starts `docker.service` under `systemctl --user` for that user
+5. Installs **`kernel-modules-extra` for `uname -r`**, loads `xt_addrtype`, and adds `/etc/modules-load.d/docker-iptables.conf` (RHEL 10 does not include this module in the base kernel package; without it, `docker.service` exits with iptables `addrtype` errors)
+6. Enables **linger** by default (before setuptool) and starts the target user’s `user@.service` so `/run/user/<uid>` exists
+7. Runs `dockerd-rootless-setuptool.sh install` via `machinectl shell` (a real login session; `runuser`/`sudo` cannot see systemd)
+8. Enables and starts `docker.service` under `systemctl --user` for that user, then verifies the daemon is active and `docker info` works
 
 **Usage:**
 
@@ -86,6 +88,30 @@ Official reference: [Docker rootless mode](https://docs.docker.com/engine/securi
 If `systemctl --user` reports **Failed to connect to bus**, log in again via SSH or the graphical console (not `sudo su` / `sudo -i`), then as the target user run `systemctl --user enable --now dbus` (or `dbus-broker` if that is the active user unit). See [Docker rootless troubleshooting](https://docs.docker.com/engine/security/rootless/troubleshoot/).
 
 If setuptool fell back to non-systemd mode (socket under `~/.docker/run/`), see **Recovery** below.
+
+### `docker.service` fails: iptables `addrtype` / missing kernel module
+
+On AlmaLinux/RHEL 10, a common failure after install looks like:
+
+```text
+failed to register "bridge" driver: ... addrtype revision 0 not supported, missing kernel module?
+modprobe: FATAL: Module xt_addrtype not found in directory /lib/modules/<kernel>
+```
+
+**Cause:** `kernel-modules-extra` is not installed for the **currently running** kernel (often after a partial `dnf update` left a newer `kernel-modules-extra` package while the host still runs an older kernel).
+
+**Fix (as root):**
+
+```bash
+sudo dnf install -y "kernel-modules-extra-$(uname -r)"
+sudo modprobe xt_addrtype
+# as the target user:
+export DOCKER_HOST=unix:///run/user/$(id -u)/docker.sock
+systemctl --user restart docker
+docker info
+```
+
+Then re-run `setup-rootless.sh` if you want the script to re-apply linger, env hints, and checks. Rebooting after a kernel update also aligns the running kernel with the latest `kernel-modules-extra` package.
 
 ### Recovery (broken or partial install)
 
@@ -137,4 +163,5 @@ Do not run both scripts expecting two active daemons on one host: rootless disab
 
 - Re-running `setup.sh` on a host that already has the Docker repo may fail at “add repo” if the repo file exists; remove the repo file or adjust the command if you need a clean re-add.
 - Rootless assigns subuids `100000-165535` only if the user has no existing `/etc/subuid` / `/etc/subgid` entry.
+- On RHEL-family 10, Docker still uses the iptables compatibility layer; `kernel-modules-extra` is required even when `iptables --version` reports `nf_tables`.
 - These scripts target AlmaLinux 10; other RHEL 10–compatible systems may work but are untested here.
