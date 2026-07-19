@@ -1,0 +1,18 @@
+services:
+  openbao:
+    image: dhi.io/openbao:2.6.0
+    container_name: openbao
+    restart: unless-stopped
+    command: ["server", "-config=/openbao/config"]
+    ports:
+      - "8200:8200"
+    volumes:
+      - /fast/docker-appdata/openbao/config:/openbao/config:ro
+      - /fast/docker-appdata/openbao/data:/openbao/data
+    networks:
+      - openbao
+
+networks:
+  openbao:
+    name: openbao
+    driver: bridge

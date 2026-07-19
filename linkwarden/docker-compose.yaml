@@ -1,0 +1,60 @@
+networks:
+  linkwarden:
+    name: linkwarden
+    driver: bridge
+
+services:
+  postgres:
+    image: dhi.io/postgres:16-alpine3.23
+    env_file: .env
+    restart: always
+    volumes:
+      - postgres_data:/var/lib/postgresql
+    networks:
+      - linkwarden
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.49.0
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - meilisearch_data:/meili_data
+    networks:
+      - linkwarden
+
+  linkwarden:
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/postgres
+    restart: always
+    image: ghcr.io/linkwarden/linkwarden:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - linkwarden_data:/data/data
+    depends_on:
+      - postgres
+      - meilisearch
+    networks:
+      - linkwarden
+
+volumes:
+  postgres_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${LINKWARDEN_DATA_ROOT}/postgres
+  meilisearch_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${LINKWARDEN_DATA_ROOT}/meilisearch
+  linkwarden_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${LINKWARDEN_DATA_ROOT}/linkwarden
