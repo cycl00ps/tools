@@ -1,0 +1,16 @@
+# Raft persistent storage (do not commit)
+/data/
+
+# Snapshots and backups
+*.snap
+*.snapshot
+
+# Init / unseal artifacts
+unseal-keys.txt
+root-token.txt
+*.keys
+*.token
+
+# Local overrides
+.env
+.env.*
