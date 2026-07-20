@@ -1,14 +1,17 @@
 services:
   openbao:
-    image: dhi.io/openbao:2.6.0
+    image: openbao/openbao:2.6.0
     container_name: openbao
     restart: unless-stopped
+    # Official entrypoint injects -dev-listen-address which double-binds :8200
+    # when a listener is already defined in config.hcl.
+    entrypoint: ["bao"]
     command: ["server", "-config=/openbao/config"]
     ports:
-      - "8200:8200"
+      - "127.0.0.1:9092:8200"
     volumes:
-      - /fast/docker-appdata/openbao/config:/openbao/config:ro
-      - /fast/docker-appdata/openbao/data:/openbao/data
+      - ${OPENBAO_APPDATA:-/fast/docker-appdata/openbao}/config:/openbao/config:ro
+      - ${OPENBAO_APPDATA:-/fast/docker-appdata/openbao}/data:/openbao/data
     networks:
       - openbao
 

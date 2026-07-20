@@ -14,3 +14,4 @@ root-token.txt
 # Local overrides
 .env
 .env.*
+!.env.example
