@@ -1,12 +1,12 @@
-# OpenBao (Docker Compose + DHI)
+# OpenBao (Docker Compose)
 
-Single-node OpenBao on a Docker Hardened Image, Integrated Storage (Raft), and Shamir seal. Listens on plain HTTP; put an HTTPS proxy in front.
+Single-node OpenBao on the official image (`openbao/openbao`, includes Web UI), Integrated Storage (Raft), and Shamir seal. Listens on plain HTTP on localhost only; put Caddy (or another HTTPS proxy) in front.
 
 ```
-Client → HTTPS proxy → host:8200 → openbao (network: openbao)
+Client → Caddy (HTTPS) → 127.0.0.1:9092 → openbao :8200 (network: openbao)
 ```
 
-Host persistent paths (remote machine):
+Host persistent paths (default):
 
 ```
 /fast/docker-appdata/openbao/
@@ -14,10 +14,11 @@ Host persistent paths (remote machine):
 └── data/                 # Raft state
 ```
 
+Override with `OPENBAO_APPDATA` (see Deploy).
+
 ## Prerequisites
 
 - Docker Compose
-- Docker Hub account with access to DHI Community images
 - OpenBao CLI (`bao`) on the host optional but handy for init/unseal
 
 ## Repo layout
@@ -27,6 +28,7 @@ Host persistent paths (remote machine):
 ├── docker-compose.yml
 ├── prep-host.sh         # host prep for rootless Docker
 ├── config/config.hcl    # template — installed into appdata by prep-host.sh
+├── .env.example         # OPENBAO_APPDATA default
 ├── .gitignore
 └── README.md
 ```
@@ -36,42 +38,47 @@ Host persistent paths (remote machine):
 On the target host (Docker already installed **rootless**), from this repo directory:
 
 ```bash
-docker login dhi.io          # once, for DHI pulls
-./prep-host.sh               # creates /fast/docker-appdata/openbao/{config,data},
-                             # copies config, sets rootless-mapped ownership for uid 1000
+cp .env.example .env
+# optional: edit OPENBAO_APPDATA=/your/custom/path
+
+# prep-host.sh does not auto-load Compose .env — pass the same path:
+export OPENBAO_APPDATA=/fast/docker-appdata/openbao   # or your custom path
+./prep-host.sh               # creates ${OPENBAO_APPDATA}/{config,data},
+                             # copies config, sets rootless-mapped ownership for uid 100
 docker compose up -d
 docker compose logs -f openbao
 ```
 
-`prep-host.sh` maps container UID/GID `1000` to the correct host subordinate IDs from `/etc/subuid` and `/etc/subgid` (rootless: `subuid + n - 1`). Override the appdata root with `OPENBAO_APPDATA=/path ./prep-host.sh` if needed.
+`prep-host.sh` maps container UID/GID `100`/`1000` (official `openbao` user) to the correct host subordinate IDs from `/etc/subuid` and `/etc/subgid` (rootless: `subuid + n - 1`).
 
-Only port **8200** is published. Cluster port 8201 stays internal (single node).
+Compose publishes **only** `127.0.0.1:9092` → container `8200`. Cluster port 8201 stays internal (single node). Point Caddy at `http://127.0.0.1:9092`. OpenBao TLS is disabled on purpose (`tls_disable = true`).
 
-Point your HTTPS reverse proxy at `http://HOST:8200`. OpenBao TLS is disabled on purpose (`tls_disable = true`).
+When Caddy serves a public HTTPS hostname, update `api_addr` in `config/config.hcl` to that URL, re-run `./prep-host.sh` (or copy the config into appdata), and recreate the container so UI redirects match.
 
 ### Health check
 
-The DHI runtime image has no shell, so Compose does not define a shell healthcheck. From the host:
+From the host:
 
 ```bash
-curl -s http://127.0.0.1:8200/v1/sys/health
+curl -s http://127.0.0.1:9092/v1/sys/health
 # or with the CLI:
-export BAO_ADDR=http://127.0.0.1:8200
+export BAO_ADDR=http://127.0.0.1:9092
 bao status
 ```
 
 ## Initialize and unseal (Shamir)
 
-First start only — creates the Shamir shares and root token. **Store them offline**; they are not recoverable from disk alone.
+First start only — creates cryptographically strong Shamir shares and a root token. **Store them offline**; they are not recoverable from disk alone. Default is **5 shares / threshold 3** (do not use 1-of-1 in production).
 
 ```bash
-export BAO_ADDR=http://127.0.0.1:8200
+export BAO_ADDR=http://127.0.0.1:9092
 
 bao operator init
-# Note Unseal Key 1..N and Initial Root Token
+# Note Unseal Key 1..5 and Initial Root Token — store offline; never commit
 
 bao operator unseal   # paste key 1
 bao operator unseal   # paste key 2
+bao operator unseal   # paste key 3
 # … until threshold is met
 
 bao status            # Sealed: false
@@ -112,10 +119,12 @@ OpenBao must persist encrypted data somewhere. The main production-ready choices
 ### This deploy’s layout
 
 ```
-/fast/docker-appdata/openbao/config/config.hcl  → /openbao/config/config.hcl (read-only)
-/fast/docker-appdata/openbao/data/              → /openbao/data   (Raft path)
-└── raft/ …                                     # created by OpenBao after init
+${OPENBAO_APPDATA}/config/config.hcl  → /openbao/config/config.hcl (read-only)
+${OPENBAO_APPDATA}/data/              → /openbao/data   (Raft path)
+└── raft/ …                           # created by OpenBao after init
 ```
+
+Default `OPENBAO_APPDATA` is `/fast/docker-appdata/openbao`.
 
 - Persist the entire `data/` directory across upgrades.
 - Losing `data/` loses the cluster (ciphertext without the seal keys is still unusable for recovery of secrets you care about operationally).
@@ -127,15 +136,16 @@ OpenBao must persist encrypted data somewhere. The main production-ready choices
 
 - Multi-node later: add peers with `retry_join` / `bao operator raft join` and allow cluster traffic on **8201 between nodes only**. This Compose file does not publish 8201.
 
-## Image notes (DHI)
+## Image notes
 
-- Pull requires `docker login dhi.io`.
-- Runtime tag `2.6.0` runs as non-root uid **1000** and has **no shell** — do not expect `docker exec … /bin/sh`.
-- Use the host CLI against `BAO_ADDR`, or `docker compose exec openbao bao …` if the binary is on PATH in the image.
+- Image: `openbao/openbao:2.6.0` (includes Web UI).
+- Runs as non-root uid **100** / gid **1000**.
+- Compose overrides `entrypoint` to `bao` so the stock script does not inject `-dev-listen-address` (that conflicts with `config.hcl`’s listener).
+- Use the host CLI against `BAO_ADDR`, or `docker compose exec openbao bao …`.
 
 ## References
 
-- [DHI OpenBao catalog](https://hub.docker.com/hardened-images/catalog/dhi/openbao)
+- [OpenBao Docker Hub](https://hub.docker.com/r/openbao/openbao)
 - [Configuration](https://openbao.org/docs/configuration/)
 - [Integrated Storage (Raft)](https://openbao.org/docs/configuration/storage/raft/)
 - [Seal / unseal](https://openbao.org/docs/concepts/seal/)

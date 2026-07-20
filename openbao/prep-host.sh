@@ -4,7 +4,8 @@
 set -euo pipefail
 
 APPDATA="${OPENBAO_APPDATA:-/fast/docker-appdata/openbao}"
-CONTAINER_UID=1000
+# Official openbao/openbao runs as uid 100 / gid 1000 (openbao).
+CONTAINER_UID=100
 CONTAINER_GID=1000
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -109,18 +110,21 @@ else
   fi
 fi
 
-log "checking DHI registry auth (dhi.io)"
-if docker pull --quiet dhi.io/openbao:2.6.0 >/dev/null 2>&1; then
-  log "image dhi.io/openbao:2.6.0 is pullable"
+log "checking image pull (openbao/openbao:2.6.0)"
+if docker pull --quiet openbao/openbao:2.6.0 >/dev/null 2>&1; then
+  log "image openbao/openbao:2.6.0 is pullable"
 else
-  warn "could not pull dhi.io/openbao:2.6.0 — run: docker login dhi.io"
-  warn "then re-run this script or: docker pull dhi.io/openbao:2.6.0"
+  warn "could not pull openbao/openbao:2.6.0 — check network/registry access"
 fi
 
 log "prep complete"
 printf '\nNext:\n'
+printf '  # Compose reads OPENBAO_APPDATA from .env or the environment.\n'
+printf '  # Use the same value for prep and compose (default: %s).\n' "$APPDATA"
 printf '  cd %s\n' "$SCRIPT_DIR"
+printf '  # Optional: cp .env.example .env && edit OPENBAO_APPDATA\n'
+printf '  # Optional: export OPENBAO_APPDATA=%s\n' "$APPDATA"
 printf '  docker compose up -d\n'
-printf '  export BAO_ADDR=http://127.0.0.1:8200\n'
-printf '  bao operator init    # first time only; store keys offline\n'
-printf '  bao operator unseal  # after every restart (Shamir)\n'
+printf '  export BAO_ADDR=http://127.0.0.1:9092\n'
+printf '  bao operator init    # first time only; default 5 shares / threshold 3; store offline\n'
+printf '  bao operator unseal  # after every restart (Shamir × threshold)\n'
