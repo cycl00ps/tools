@@ -1,0 +1,26 @@
+# Copied to /etc/garage.toml (or $GARAGE_CONFIG_FILE) by install.sh after substitution.
+# Paths below are host paths for a single-node production-ish layout.
+
+metadata_dir = "{{GARAGE_META_DIR}}"
+data_dir = "{{GARAGE_DATA_DIR}}"
+db_engine = "sqlite"
+
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "{{GARAGE_RPC_PUBLIC_ADDR}}"
+rpc_secret = "{{GARAGE_RPC_SECRET}}"
+
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+root_domain = ".s3.garage.localhost"
+
+[s3_web]
+bind_addr = "[::]:3902"
+root_domain = ".web.garage.localhost"
+index = "index.html"
+
+[admin]
+api_bind_addr = "[::]:3903"
+admin_token = "{{GARAGE_ADMIN_TOKEN}}"

@@ -1,0 +1,245 @@
+# Harbor on Docker Hardened Images + Garage S3 backend.
+# Prerequisites: ../.env configured, ./prepare.sh run, docker login dhi.io
+# Usage: docker compose --env-file .env up -d
+
+name: harbor
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  postgresql:
+    <<: *restart
+    image: ${HARBOR_DB_IMAGE}
+    container_name: harbor-db
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ../data/harbor/database:/var/lib/postgresql/data
+    networks: [harbor]
+    healthcheck:
+      test: ["CMD", "/docker-healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    shm_size: "1gb"
+
+  redis:
+    <<: *restart
+    image: ${HARBOR_REDIS_IMAGE}
+    container_name: harbor-redis
+    volumes:
+      - ../data/harbor/redis:/var/lib/redis
+    networks: [harbor]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  registry:
+    <<: *restart
+    image: ${HARBOR_REGISTRY_IMAGE}
+    container_name: registry
+    command: ["serve", "/etc/registry/config.yml"]
+    volumes:
+      - ./generated/registry/config.yml:/etc/registry/config.yml:ro
+      - ./generated/registry/passwd:/etc/registry/passwd:ro
+      - ./secrets/registry/root.crt:/etc/registry/root.crt:ro
+    networks: [harbor]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/registry", "--version"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  registryctl:
+    <<: *restart
+    image: ${HARBOR_REGISTRYCTL_IMAGE}
+    container_name: registryctl
+    command: ["/usr/local/bin/harbor-registryctl"]
+    environment:
+      CORE_SECRET: ${CORE_SECRET}
+      JOBSERVICE_SECRET: ${JOBSERVICE_SECRET}
+    volumes:
+      - ./generated/registry/config.yml:/etc/registry/config.yml:ro
+      - ./generated/registry/passwd:/etc/registry/passwd:ro
+      - ./generated/registryctl/config.yml:/etc/registryctl/config.yml:ro
+      - ./secrets/registry/root.crt:/etc/registry/root.crt:ro
+    networks: [harbor]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - registry
+
+  core:
+    <<: *restart
+    image: ${HARBOR_CORE_IMAGE}
+    container_name: harbor-core
+    command: ["/usr/local/bin/harbor-core"]
+    environment:
+      CONFIG_PATH: /etc/core/app.conf
+      CORE_SECRET: ${CORE_SECRET}
+      JOBSERVICE_SECRET: ${JOBSERVICE_SECRET}
+      CSRF_KEY: ${CSRF_KEY}
+      EXT_ENDPOINT: ${HARBOR_EXTERNAL_URL}
+      CORE_URL: http://core:8080
+      CORE_LOCAL_URL: http://127.0.0.1:8080
+      JOBSERVICE_URL: http://jobservice:8080
+      REGISTRY_URL: http://registry:5000
+      REGISTRY_CONTROLLER_URL: http://registryctl:8080
+      TOKEN_SERVICE_URL: http://core:8080/service/token
+      PORTAL_URL: http://portal:8080
+      TRIVY_ADAPTER_URL: http://trivy-adapter:8080
+      DATABASE_TYPE: postgresql
+      POSTGRESQL_HOST: postgresql
+      POSTGRESQL_PORT: "5432"
+      POSTGRESQL_USERNAME: postgres
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRESQL_DATABASE: registry
+      POSTGRESQL_SSLMODE: disable
+      POSTGRESQL_MAX_IDLE_CONNS: "50"
+      POSTGRESQL_MAX_OPEN_CONNS: "100"
+      _REDIS_URL_CORE: redis://redis:6379/0
+      _REDIS_URL_REG: redis://redis:6379/1
+      HARBOR_ADMIN_PASSWORD: ${HARBOR_ADMIN_PASSWORD}
+      WITH_TRIVY: "true"
+      REGISTRY_STORAGE_PROVIDER_NAME: s3
+      READ_ONLY: "false"
+      REGISTRY_CREDENTIAL_USERNAME: ${REGISTRY_CREDENTIAL_USERNAME}
+      REGISTRY_CREDENTIAL_PASSWORD: ${REGISTRY_CREDENTIAL_PASSWORD}
+      LOG_LEVEL: info
+      PORT: "8080"
+      PERMITTED_REGISTRY_TYPES_FOR_PROXY_CACHE: docker-hub,harbor,azure-acr,ali-acr,aws-ecr,google-gcr,docker-registry,github-ghcr,jfrog-artifactory
+      REPLICATION_ADAPTER_WHITELIST: ali-acr,aws-ecr,azure-acr,docker-hub,docker-registry,github-ghcr,google-gcr,harbor,huawei-SWR,jfrog-artifactory,tencent-tcr,volcengine-cr
+    volumes:
+      - ./generated/core/app.conf:/etc/core/app.conf:ro
+      - ./secrets/core/private_key.pem:/etc/core/private_key.pem:ro
+      - ./secrets/core/secretkey:/etc/core/key:ro
+      - ../data/harbor/core:/data
+    networks: [harbor]
+    depends_on:
+      postgresql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      registry:
+        condition: service_started
+      registryctl:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/harbor-core", "-h"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  portal:
+    <<: *restart
+    image: ${HARBOR_PORTAL_IMAGE}
+    container_name: harbor-portal
+    volumes:
+      - ./generated/portal/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks: [harbor]
+    depends_on:
+      - core
+
+  jobservice:
+    <<: *restart
+    image: ${HARBOR_JOBSERVICE_IMAGE}
+    container_name: harbor-jobservice
+    command: ["/usr/local/bin/harbor-jobservice", "-c", "/etc/jobservice/config.yml"]
+    environment:
+      CORE_SECRET: ${CORE_SECRET}
+      JOBSERVICE_SECRET: ${JOBSERVICE_SECRET}
+      CORE_URL: http://core:8080
+      REGISTRY_URL: http://registry:5000
+      REGISTRY_CONTROLLER_URL: http://registryctl:8080
+      LOG_LEVEL: info
+    volumes:
+      - ./generated/jobservice/config.yml:/etc/jobservice/config.yml:ro
+      - ../data/harbor/job_logs:/var/log/jobs
+    networks: [harbor]
+    depends_on:
+      - core
+      - redis
+
+  trivy-adapter:
+    <<: *restart
+    image: ${HARBOR_TRIVY_IMAGE}
+    container_name: trivy-adapter
+    environment:
+      SCANNER_LOG_LEVEL: info
+      SCANNER_REDIS_URL: redis://redis:6379/5
+      SCANNER_STORE_REDIS_URL: redis://redis:6379/5
+      SCANNER_STORE_REDIS_NAMESPACE: harbor.scanner.trivy:store
+      SCANNER_JOB_QUEUE_REDIS_URL: redis://redis:6379/5
+      SCANNER_JOB_QUEUE_REDIS_NAMESPACE: harbor.scanner.trivy:job-queue
+      SCANNER_TRIVY_CACHE_DIR: /home/scanner/.cache/trivy
+      SCANNER_TRIVY_REPORTS_DIR: /home/scanner/.cache/reports
+      SCANNER_TRIVY_VULN_TYPE: os,library
+      SCANNER_TRIVY_SEVERITY: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+      SCANNER_TRIVY_IGNORE_UNFIXED: "false"
+      SCANNER_TRIVY_SKIP_UPDATE: "false"
+      SCANNER_TRIVY_INSECURE: "false"
+      SCANNER_TRIVY_TIMEOUT: 5m0s
+    volumes:
+      - ../data/harbor/trivy:/home/scanner/.cache
+    networks: [harbor]
+    depends_on:
+      - redis
+      - core
+
+  exporter:
+    <<: *restart
+    image: ${HARBOR_EXPORTER_IMAGE}
+    container_name: harbor-exporter
+    environment:
+      LOG_LEVEL: info
+      HARBOR_EXPORTER_PORT: "8080"
+      HARBOR_EXPORTER_METRICS_PATH: /metrics
+      HARBOR_EXPORTER_METRICS_ENABLED: "true"
+      HARBOR_SERVICE_SCHEME: http
+      HARBOR_SERVICE_HOST: core
+      HARBOR_SERVICE_PORT: "8080"
+      HARBOR_REDIS_URL: redis://redis:6379/2
+      HARBOR_REDIS_NAMESPACE: harbor_job_service_namespace
+      HARBOR_DATABASE_HOST: postgresql
+      HARBOR_DATABASE_PORT: "5432"
+      HARBOR_DATABASE_USERNAME: postgres
+      HARBOR_DATABASE_PASSWORD: ${POSTGRES_PASSWORD}
+      HARBOR_DATABASE_DBNAME: registry
+      HARBOR_DATABASE_SSLMODE: disable
+    networks: [harbor]
+    depends_on:
+      - core
+      - postgresql
+
+  proxy:
+    <<: *restart
+    image: ${NGINX_IMAGE}
+    container_name: nginx
+    volumes:
+      - ./generated/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./secrets/tls/tls.crt:/etc/nginx/certs/tls.crt:ro
+      - ./secrets/tls/tls.key:/etc/nginx/certs/tls.key:ro
+    ports:
+      - "${HTTP_PORT:-80}:8080"
+      - "${HTTPS_PORT:-443}:8443"
+    networks: [harbor]
+    depends_on:
+      - core
+      - portal
+      - registry
+
+networks:
+  harbor:
+    name: harbor_net
+    driver: bridge

@@ -1,0 +1,51 @@
+version: 0.1
+log:
+  level: info
+  fields:
+    service: registry
+storage:
+  cache:
+    layerinfo: redis
+  s3:
+    accesskey: __GARAGE_ACCESS_KEY__
+    secretkey: __GARAGE_SECRET_KEY__
+    region: garage
+    regionendpoint: __GARAGE_S3_ENDPOINT__
+    bucket: __GARAGE_BUCKET__
+    secure: false
+    v4auth: true
+    rootdirectory: /
+  maintenance:
+    uploadpurging:
+      enabled: false
+  delete:
+    enabled: true
+  redirect:
+    disable: true
+redis:
+  addr: redis:6379
+  readtimeout: 10s
+  writetimeout: 10s
+  dialtimeout: 10s
+  password:
+  db: 1
+  pool:
+    maxidle: 100
+    maxactive: 500
+    idletimeout: 60s
+http:
+  addr: :5000
+  secret: placeholder
+  relativeurls: false
+  draintimeout: 60s
+  debug:
+    addr: localhost:5001
+auth:
+  htpasswd:
+    realm: harbor-registry-basic-realm
+    path: /etc/registry/passwd
+validation:
+  disabled: true
+compatibility:
+  schema1:
+    enabled: true

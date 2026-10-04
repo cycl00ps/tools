@@ -1,0 +1,20 @@
+[Unit]
+Description=Garage S3-compatible object storage (single-node)
+Documentation=https://garagehq.deuxfleurs.fr/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=garage
+Group=garage
+ExecStart=/usr/local/bin/garage server --single-node
+Environment=GARAGE_CONFIG_FILE=/etc/garage.toml
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+# Data dirs must be owned by garage:garage
+ReadWritePaths=/var/lib/garage
+
+[Install]
+WantedBy=multi-user.target

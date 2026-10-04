@@ -1,0 +1,12 @@
+.env
+harbor/.env
+harbor/generated/
+harbor/secrets/
+data/
+*.pem
+*.key
+*.crt
+!harbor/templates/**
+__pycache__/
+*.pyc
+.DS_Store
