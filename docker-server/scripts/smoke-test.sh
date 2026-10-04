@@ -6,7 +6,15 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 set -a; source "${ROOT_DIR}/.env"; set +a
 
-HOST="${HARBOR_HOSTNAME}"
+# Registry host for docker login/push must include non-default HTTPS port when used.
+HOST="${SMOKE_REGISTRY_HOST:-}"
+if [[ -z "${HOST}" ]]; then
+  if [[ "${HTTPS_PORT:-443}" != "443" ]]; then
+    HOST="${HARBOR_HOSTNAME}:${HTTPS_PORT}"
+  else
+    HOST="${HARBOR_HOSTNAME}"
+  fi
+fi
 USER="${SMOKE_USER:-admin}"
 PASS="${HARBOR_ADMIN_PASSWORD}"
 PROJECT="${SMOKE_PROJECT:-library}"

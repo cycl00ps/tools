@@ -36,7 +36,7 @@ Edit `.env` (required):
 | `HARBOR_EXTERNAL_URL` | `https://<HARBOR_HOSTNAME>` (include port if `HTTPS_PORT` ≠ 443) |
 | `HARBOR_ADMIN_PASSWORD` | Strong password; used for UI `admin` user |
 | `POSTGRES_PASSWORD` | Strong password for Harbor DB |
-| `GARAGE_S3_ENDPOINT` | Leave default `http://host.docker.internal:3900` on Linux Docker 20.10+ |
+| `GARAGE_S3_ENDPOINT` | Host LAN IP, e.g. `http://192.168.1.10:3900` (required for rootless Docker; `host.docker.internal` often fails) |
 
 Leave `GARAGE_ACCESS_KEY` / `GARAGE_SECRET_KEY` empty; bootstrap fills them.
 
@@ -123,7 +123,10 @@ Stop Harbor before consistent DB backup: `./scripts/down.sh`. Garage may stay up
 | Symptom | Check |
 |---------|--------|
 | `ErrImagePull` / unauthorized `dhi.io` | `docker login dhi.io` with Docker Hub user/PAT |
-| Registry push fails with S3 errors | `sudo garage status`; keys in `.env`; endpoint reachable from registry container |
+| Registry push fails with S3 errors | `sudo garage status`; keys in `.env`; endpoint reachable from registry container (use LAN IP, not `127.0.0.1` / often not `host.docker.internal` under rootless) |
+| `unable to get PrivateKey from PEM type: PRIVATE KEY` | Re-run prepare after deleting `harbor/secrets/core/private_key.pem` — key must be traditional RSA (`BEGIN RSA PRIVATE KEY`) |
+| CSRF key length error | `CSRF_KEY` must be exactly 32 characters; re-run `harbor/prepare.sh` |
+| Docker TLS unknown authority (rootless) | Place cert at `~/.config/docker/certs.d/<host:port>/ca.crt` (not `/etc/docker/...`) |
 | UI login CSRF / cookie issues | Use exact `HARBOR_EXTERNAL_URL`; trust TLS cert |
 | Permission errors on volumes | Re-run `harbor/prepare.sh` (sets `a+rwX` on `data/harbor`) |
 | Core crash-loop | `docker logs harbor-core` — usually DB/redis/secrets |

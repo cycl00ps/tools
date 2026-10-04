@@ -64,7 +64,8 @@ services:
     <<: *restart
     image: ${HARBOR_REGISTRYCTL_IMAGE}
     container_name: registryctl
-    command: ["/usr/local/bin/harbor-registryctl"]
+    # Image ENTRYPOINT is already the binary; only pass args
+    command: ["-c", "/etc/registryctl/config.yml"]
     environment:
       CORE_SECRET: ${CORE_SECRET}
       JOBSERVICE_SECRET: ${JOBSERVICE_SECRET}
@@ -83,7 +84,6 @@ services:
     <<: *restart
     image: ${HARBOR_CORE_IMAGE}
     container_name: harbor-core
-    command: ["/usr/local/bin/harbor-core"]
     environment:
       CONFIG_PATH: /etc/core/app.conf
       CORE_SECRET: ${CORE_SECRET}
@@ -155,7 +155,7 @@ services:
     <<: *restart
     image: ${HARBOR_JOBSERVICE_IMAGE}
     container_name: harbor-jobservice
-    command: ["/usr/local/bin/harbor-jobservice", "-c", "/etc/jobservice/config.yml"]
+    command: ["-c", "/etc/jobservice/config.yml"]
     environment:
       CORE_SECRET: ${CORE_SECRET}
       JOBSERVICE_SECRET: ${JOBSERVICE_SECRET}

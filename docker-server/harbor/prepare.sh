@@ -28,9 +28,12 @@ set +a
 : "${GARAGE_BUCKET:?set GARAGE_BUCKET}"
 : "${GARAGE_S3_ENDPOINT:?set GARAGE_S3_ENDPOINT (e.g. http://host.docker.internal:3900)}"
 
-rand16() {
-  python3 -c 'import secrets,string; a=string.ascii_letters+string.digits; print("".join(secrets.choice(a) for _ in range(16)))'
+rand_alnum() {
+  local n="${1:-16}"
+  python3 -c 'import secrets,string,sys; n=int(sys.argv[1]); a=string.ascii_letters+string.digits; print("".join(secrets.choice(a) for _ in range(n)))' "${n}"
 }
+rand16() { rand_alnum 16; }
+rand32() { rand_alnum 32; }
 
 upsert_env() {
   local key="$1" val="$2"
@@ -69,7 +72,12 @@ ensure_secret() {
 
 ensure_secret CORE_SECRET
 ensure_secret JOBSERVICE_SECRET
-ensure_secret CSRF_KEY
+# Harbor 2.15 requires CSRF_KEY length == 32
+if [[ -z "${CSRF_KEY:-}" || ${#CSRF_KEY} -ne 32 ]]; then
+  CSRF_KEY="$(rand32)"
+  upsert_env CSRF_KEY "${CSRF_KEY}"
+  echo "==> Generated CSRF_KEY (32 chars)"
+fi
 ensure_secret REGISTRY_CREDENTIAL_PASSWORD
 REGISTRY_CREDENTIAL_USERNAME="${REGISTRY_CREDENTIAL_USERNAME:-harbor_registry_user}"
 upsert_env REGISTRY_CREDENTIAL_USERNAME "${REGISTRY_CREDENTIAL_USERNAME}"
@@ -104,12 +112,14 @@ fi
 PRIV="${SECRETS}/core/private_key.pem"
 ROOTCRT="${SECRETS}/registry/root.crt"
 if [[ ! -f "${PRIV}" || ! -f "${ROOTCRT}" ]]; then
-  echo "==> Generating Harbor token signing keypair"
+  echo "==> Generating Harbor token signing keypair (traditional RSA PEM)"
+  # Harbor token service requires PKCS#1 "BEGIN RSA PRIVATE KEY" (-traditional),
+  # not PKCS#8 "BEGIN PRIVATE KEY".
   if command -v openssl >/dev/null 2>&1; then
-    openssl genrsa -out "${PRIV}" 4096
+    openssl genrsa -traditional -out "${PRIV}" 4096
     openssl req -new -x509 -key "${PRIV}" -out "${ROOTCRT}" -days 3650 -subj "/"
   else
-    docker run --rm -v "${SECRETS}:/s" alpine/openssl genrsa -out /s/core/private_key.pem 4096
+    docker run --rm -v "${SECRETS}:/s" alpine/openssl genrsa -traditional -out /s/core/private_key.pem 4096
     docker run --rm -v "${SECRETS}:/s" alpine/openssl req -new -x509 -key /s/core/private_key.pem -out /s/registry/root.crt -days 3650 -subj "/"
   fi
   chmod 0640 "${PRIV}" "${ROOTCRT}"
