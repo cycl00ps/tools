@@ -9,6 +9,14 @@ need() {
   command -v "$1" >/dev/null 2>&1 || { echo "ERROR: missing required command: $1" >&2; exit 1; }
 }
 
+harbor_compose() {
+  local files=(-f harbor/docker-compose.yml)
+  if [[ "${NGINX_ENABLE_HTTPS:-true}" == "true" ]]; then
+    files+=(-f harbor/docker-compose.https.yml)
+  fi
+  docker compose "${files[@]}" --env-file harbor/.env "$@"
+}
+
 echo "==> Checking prerequisites"
 need curl
 need docker
@@ -45,9 +53,12 @@ fi
 echo "==> [4/5] Prepare Harbor configs/secrets"
 ./harbor/prepare.sh
 
+# Re-load generated compose env (HARBOR_DATA_DIR, NGINX_ENABLE_HTTPS, …)
+set -a; source harbor/.env; set +a
+
 echo "==> [5/5] Start Harbor Compose stack"
-docker compose -f harbor/docker-compose.yml --env-file harbor/.env pull
-docker compose -f harbor/docker-compose.yml --env-file harbor/.env up -d
+harbor_compose pull
+harbor_compose up -d
 
 echo
 echo "==> Waiting for core API..."
@@ -58,7 +69,7 @@ for i in $(seq 1 60); do
   fi
   sleep 5
   if [[ "$i" -eq 60 ]]; then
-    echo "WARN: health check timed out; inspect: docker compose -f harbor/docker-compose.yml logs core" >&2
+    echo "WARN: health check timed out; inspect: harbor compose logs core" >&2
   fi
 done
 
@@ -67,7 +78,19 @@ echo "Deploy complete."
 echo "  Portal:  ${HARBOR_EXTERNAL_URL}"
 echo "  User:    admin"
 echo "  Pass:    (HARBOR_ADMIN_PASSWORD from .env)"
+echo "  HTTPS:   NGINX_ENABLE_HTTPS=${NGINX_ENABLE_HTTPS:-true}"
 echo "  Smoke:   ./scripts/smoke-test.sh"
 echo
-echo "If using a self-signed cert, trust harbor/secrets/tls/tls.crt on clients,"
-echo "or temporarily configure the Docker daemon insecure-registries for lab use."
+if [[ "${NGINX_ENABLE_HTTPS:-true}" != "true" ]]; then
+  echo "HTTP-only nginx: point your TLS terminator (e.g. Caddy) at"
+  echo "  http://${PROXY_HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-80}"
+  echo "and set HARBOR_EXTERNAL_URL to the public https:// URL."
+elif [[ "${HARBOR_EXTERNAL_URL}" == http://* ]]; then
+  _reg="${HARBOR_EXTERNAL_URL#http://}"
+  _reg="${_reg%%/*}"
+  echo "HTTP lab mode: add \"${_reg}\" to Docker insecure-registries, then restart Docker."
+  echo "  Rootless: ~/.config/docker/daemon.json → systemctl --user restart docker"
+else
+  echo "If using a self-signed cert, trust harbor/secrets/tls/tls.crt on clients,"
+  echo "or temporarily configure the Docker daemon insecure-registries for lab use."
+fi

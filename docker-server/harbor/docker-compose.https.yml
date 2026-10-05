@@ -1,0 +1,10 @@
+# Optional HTTPS publish for Harbor nginx.
+# Used when NGINX_ENABLE_HTTPS=true:
+#   docker compose -f harbor/docker-compose.yml -f harbor/docker-compose.https.yml --env-file harbor/.env up -d
+services:
+  proxy:
+    volumes:
+      - ./secrets/tls/tls.crt:/etc/nginx/certs/tls.crt:ro
+      - ./secrets/tls/tls.key:/etc/nginx/certs/tls.key:ro
+    ports:
+      - "${HTTPS_PORT:-443}:8443"

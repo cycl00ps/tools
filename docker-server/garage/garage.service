@@ -8,13 +8,13 @@ Wants=network-online.target
 Type=simple
 User=garage
 Group=garage
-ExecStart=/usr/local/bin/garage server --single-node
-Environment=GARAGE_CONFIG_FILE=/etc/garage.toml
+ExecStart={{GARAGE_BIN_PATH}} server --single-node
+Environment=GARAGE_CONFIG_FILE={{GARAGE_CONFIG_PATH}}
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=65536
 # Data dirs must be owned by garage:garage
-ReadWritePaths=/var/lib/garage
+ReadWritePaths={{GARAGE_READWRITE_PATHS}}
 
 [Install]
 WantedBy=multi-user.target

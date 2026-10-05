@@ -15,7 +15,7 @@ services:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - ../data/harbor/database:/var/lib/postgresql/data
+      - ${HARBOR_DATA_DIR}/database:/var/lib/postgresql/data
     networks: [harbor]
     healthcheck:
       test: ["CMD", "/docker-healthcheck.sh"]
@@ -30,7 +30,7 @@ services:
     image: ${HARBOR_REDIS_IMAGE}
     container_name: harbor-redis
     volumes:
-      - ../data/harbor/redis:/var/lib/redis
+      - ${HARBOR_DATA_DIR}/redis:/var/lib/redis
     networks: [harbor]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -123,7 +123,7 @@ services:
       - ./generated/core/app.conf:/etc/core/app.conf:ro
       - ./secrets/core/private_key.pem:/etc/core/private_key.pem:ro
       - ./secrets/core/secretkey:/etc/core/key:ro
-      - ../data/harbor/core:/data
+      - ${HARBOR_DATA_DIR}/core:/data
     networks: [harbor]
     depends_on:
       postgresql:
@@ -165,7 +165,7 @@ services:
       LOG_LEVEL: info
     volumes:
       - ./generated/jobservice/config.yml:/etc/jobservice/config.yml:ro
-      - ../data/harbor/job_logs:/var/log/jobs
+      - ${HARBOR_DATA_DIR}/job_logs:/var/log/jobs
     networks: [harbor]
     depends_on:
       - core
@@ -191,7 +191,7 @@ services:
       SCANNER_TRIVY_INSECURE: "false"
       SCANNER_TRIVY_TIMEOUT: 5m0s
     volumes:
-      - ../data/harbor/trivy:/home/scanner/.cache
+      - ${HARBOR_DATA_DIR}/trivy:/home/scanner/.cache
     networks: [harbor]
     depends_on:
       - redis
@@ -228,11 +228,8 @@ services:
     container_name: nginx
     volumes:
       - ./generated/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./secrets/tls/tls.crt:/etc/nginx/certs/tls.crt:ro
-      - ./secrets/tls/tls.key:/etc/nginx/certs/tls.key:ro
     ports:
-      - "${HTTP_PORT:-80}:8080"
-      - "${HTTPS_PORT:-443}:8443"
+      - "${PROXY_HTTP_BIND:-0.0.0.0}:${HTTP_PORT:-80}:8080"
     networks: [harbor]
     depends_on:
       - core

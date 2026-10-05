@@ -82,15 +82,28 @@ ensure_secret REGISTRY_CREDENTIAL_PASSWORD
 REGISTRY_CREDENTIAL_USERNAME="${REGISTRY_CREDENTIAL_USERNAME:-harbor_registry_user}"
 upsert_env REGISTRY_CREDENTIAL_USERNAME "${REGISTRY_CREDENTIAL_USERNAME}"
 
+# Harbor data bind-mount root (absolute). Empty => <repo>/data/harbor
+if [[ -z "${HARBOR_DATA_DIR:-}" ]]; then
+  HARBOR_DATA_DIR="${ROOT_DIR}/data/harbor"
+fi
+# Expand relative paths against repo root
+if [[ "${HARBOR_DATA_DIR}" != /* ]]; then
+  HARBOR_DATA_DIR="${ROOT_DIR}/${HARBOR_DATA_DIR}"
+fi
+NGINX_ENABLE_HTTPS="${NGINX_ENABLE_HTTPS:-true}"
+PROXY_HTTP_BIND="${PROXY_HTTP_BIND:-0.0.0.0}"
+HTTP_PORT="${HTTP_PORT:-80}"
+HTTPS_PORT="${HTTPS_PORT:-443}"
+
 mkdir -p "${GEN}/nginx" "${GEN}/registry" "${GEN}/registryctl" "${GEN}/jobservice" "${GEN}/core" "${GEN}/portal" \
   "${SECRETS}/core" "${SECRETS}/registry" "${SECRETS}/tls" \
-  "${ROOT_DIR}/data/harbor/database" "${ROOT_DIR}/data/harbor/redis" \
-  "${ROOT_DIR}/data/harbor/job_logs" "${ROOT_DIR}/data/harbor/trivy" "${ROOT_DIR}/data/harbor/core"
+  "${HARBOR_DATA_DIR}/database" "${HARBOR_DATA_DIR}/redis" \
+  "${HARBOR_DATA_DIR}/job_logs" "${HARBOR_DATA_DIR}/trivy" "${HARBOR_DATA_DIR}/core"
 
-# --- TLS certs (self-signed if missing) ---
+# --- TLS certs (self-signed if missing; only required when nginx HTTPS is enabled) ---
 TLS_CRT="${SECRETS}/tls/tls.crt"
 TLS_KEY="${SECRETS}/tls/tls.key"
-if [[ ! -f "${TLS_CRT}" || ! -f "${TLS_KEY}" ]]; then
+if [[ "${NGINX_ENABLE_HTTPS}" == "true" ]] && [[ ! -f "${TLS_CRT}" || ! -f "${TLS_KEY}" ]]; then
   echo "==> Generating self-signed TLS cert for ${HARBOR_HOSTNAME}"
   if command -v openssl >/dev/null 2>&1; then
     openssl req -x509 -nodes -newkey rsa:4096 -days 3650 \
@@ -160,21 +173,50 @@ cp "${HARBOR_DIR}/templates/registryctl/config.yml" "${GEN}/registryctl/config.y
 cp "${HARBOR_DIR}/templates/jobservice/config.yml.tmpl" "${GEN}/jobservice/config.yml"
 cp "${HARBOR_DIR}/templates/core/app.conf" "${GEN}/core/app.conf"
 cp "${HARBOR_DIR}/templates/portal/nginx.conf" "${GEN}/portal/nginx.conf"
-cp "${HARBOR_DIR}/templates/nginx/nginx.conf.tmpl" "${GEN}/nginx/nginx.conf"
+
+# Render nginx: HTTP always; HTTPS server block only when enabled
+NGINX_OUT="${GEN}/nginx/nginx.conf"
+cp "${HARBOR_DIR}/templates/nginx/nginx.conf.tmpl" "${NGINX_OUT}"
+if [[ "${NGINX_ENABLE_HTTPS}" == "true" ]]; then
+  echo "==> Nginx: HTTP + HTTPS listeners"
+  # Insert HTTPS server block before the closing brace of http {}
+  python3 - "${NGINX_OUT}" "${HARBOR_DIR}/templates/nginx/nginx-https.conf.tmpl" <<'PY'
+import sys
+out_path, https_path = sys.argv[1], sys.argv[2]
+base = open(out_path).read()
+https = open(https_path).read().rstrip() + "\n"
+if "# __NGINX_HTTPS_SERVER__" not in base:
+    raise SystemExit("nginx.conf.tmpl missing # __NGINX_HTTPS_SERVER__ marker")
+open(out_path, "w").write(base.replace("  # __NGINX_HTTPS_SERVER__\n", https, 1))
+PY
+else
+  echo "==> Nginx: HTTP-only (NGINX_ENABLE_HTTPS=false; external TLS terminator expected)"
+  sed -i '/# __NGINX_HTTPS_SERVER__/d' "${NGINX_OUT}"
+fi
 
 # DHI images run as uid 65532 (nonroot). Make data dirs world-writable or owned by 65532.
 echo "==> Fixing data directory permissions for nonroot (uid 65532)"
 chmod -R a+rwX \
-  "${ROOT_DIR}/data/harbor/database" \
-  "${ROOT_DIR}/data/harbor/redis" \
-  "${ROOT_DIR}/data/harbor/job_logs" \
-  "${ROOT_DIR}/data/harbor/trivy" \
-  "${ROOT_DIR}/data/harbor/core" 2>/dev/null || true
+  "${HARBOR_DATA_DIR}/database" \
+  "${HARBOR_DATA_DIR}/redis" \
+  "${HARBOR_DATA_DIR}/job_logs" \
+  "${HARBOR_DATA_DIR}/trivy" \
+  "${HARBOR_DATA_DIR}/core" 2>/dev/null || true
 # secrets readable by nonroot
 chmod -R a+rX "${SECRETS}" "${GEN}"
-chmod 0640 "${TLS_KEY}" "${PRIV}" "${SECRETKEY_FILE}" 2>/dev/null || true
-# nonroot needs to read key/certs — grant o+r for container uid when not matching host
-chmod a+r "${TLS_KEY}" "${PRIV}" "${SECRETKEY_FILE}" "${ROOTCRT}" "${TLS_CRT}"
+chmod 0640 "${PRIV}" "${SECRETKEY_FILE}" 2>/dev/null || true
+chmod a+r "${PRIV}" "${SECRETKEY_FILE}" "${ROOTCRT}"
+if [[ -f "${TLS_KEY}" ]]; then
+  chmod 0640 "${TLS_KEY}" 2>/dev/null || true
+  chmod a+r "${TLS_KEY}" "${TLS_CRT}"
+fi
+
+# Compose file list helper for deploy/down (relative to repo root)
+if [[ "${NGINX_ENABLE_HTTPS}" == "true" ]]; then
+  COMPOSE_FILES="-f harbor/docker-compose.yml -f harbor/docker-compose.https.yml"
+else
+  COMPOSE_FILES="-f harbor/docker-compose.yml"
+fi
 
 # Write compose env overlay used by docker compose
 cat > "${HARBOR_DIR}/.env" <<EOF
@@ -199,9 +241,14 @@ HARBOR_EXPORTER_IMAGE=${HARBOR_EXPORTER_IMAGE}
 HARBOR_DB_IMAGE=${HARBOR_DB_IMAGE}
 HARBOR_REDIS_IMAGE=${HARBOR_REDIS_IMAGE}
 NGINX_IMAGE=${NGINX_IMAGE}
-HTTP_PORT=${HTTP_PORT:-80}
-HTTPS_PORT=${HTTPS_PORT:-443}
+NGINX_ENABLE_HTTPS=${NGINX_ENABLE_HTTPS}
+HTTP_PORT=${HTTP_PORT}
+HTTPS_PORT=${HTTPS_PORT}
+PROXY_HTTP_BIND=${PROXY_HTTP_BIND}
+HARBOR_DATA_DIR=${HARBOR_DATA_DIR}
+COMPOSE_FILES="${COMPOSE_FILES}"
 EOF
 
 echo "OK: Harbor configs rendered under ${GEN}"
-echo "    Next: docker login dhi.io && docker compose -f harbor/docker-compose.yml --env-file harbor/.env up -d"
+echo "    Data dir: ${HARBOR_DATA_DIR}"
+echo "    Compose:  docker compose ${COMPOSE_FILES} --env-file harbor/.env up -d"

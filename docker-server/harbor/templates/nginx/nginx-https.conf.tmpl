@@ -1,52 +1,15 @@
-worker_processes auto;
-pid /tmp/nginx.pid;
-
-events {
-  worker_connections 3096;
-  use epoll;
-  multi_accept on;
-}
-
-http {
-  client_body_temp_path /tmp/client_body_temp;
-  proxy_temp_path /tmp/proxy_temp;
-  fastcgi_temp_path /tmp/fastcgi_temp;
-  uwsgi_temp_path /tmp/uwsgi_temp;
-  scgi_temp_path /tmp/scgi_temp;
-  tcp_nodelay on;
-  proxy_http_version 1.1;
-
-  upstream core {
-    server core:8080;
-  }
-
-  upstream portal {
-    server portal:8080;
-  }
-
-  log_format timed_combined '$remote_addr - '
-    '"$request" $status $body_bytes_sent '
-    '"$http_referer" "$http_user_agent" '
-    '$request_time $upstream_response_time $pipe';
-
-  access_log /dev/stdout timed_combined;
-
-  map $http_x_forwarded_proto $x_forwarded_proto {
-    default $http_x_forwarded_proto;
-    ""      $scheme;
-  }
-
-  # Harbor edge vhost (HTTP). HTTPS is appended by prepare.sh when NGINX_ENABLE_HTTPS=true.
-  # NOTE: do not force "; Secure" on cookies — Harbor sets Secure from EXT_ENDPOINT.
-  #
-  # Harbor 2.15.2 ships gorilla/csrf v1.7.3 which always treats the request URL as
-  # https:// for Origin checks (unless core sets PlaintextHTTPContextKey, which it
-  # does not). Non-default ports also require Host to include the port ($http_host).
-  # Rewrite Origin to https://$http_host so UI login works over plain HTTP.
-
+  # HTTPS listener (enabled when NGINX_ENABLE_HTTPS=true).
   server {
-    listen 8080;
+    listen 8443 ssl;
     server_tokens off;
+
+    ssl_certificate     /etc/nginx/certs/tls.crt;
+    ssl_certificate_key /etc/nginx/certs/tls.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers '!aNULL:kECDH+AESGCM:ECDH+AESGCM:RSA+AESGCM:kECDH+AES:ECDH+AES:RSA+AES:';
+    ssl_prefer_server_ciphers on;
+    ssl_session_cache shared:SSL:10m;
+
     client_max_body_size 0;
     chunked_transfer_encoding on;
 
@@ -85,9 +48,7 @@ http {
       proxy_request_buffering off;
     }
 
-    location /v1/ {
-      return 404;
-    }
+    location /v1/ { return 404; }
 
     location /v2/ {
       proxy_pass http://core/v2/;
@@ -111,10 +72,5 @@ http {
       proxy_request_buffering off;
     }
 
-    location /service/notifications {
-      return 404;
-    }
+    location /service/notifications { return 404; }
   }
-
-  # __NGINX_HTTPS_SERVER__
-}

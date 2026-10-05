@@ -42,12 +42,30 @@ install -m 0755 "${TMP}" "${GARAGE_BIN_PATH}"
 rm -f "${TMP}"
 "${GARAGE_BIN_PATH}" --version || true
 
-if ! id -u garage >/dev/null 2>&1; then
-  useradd --system --home /var/lib/garage --shell /usr/sbin/nologin garage
+# Home for the system user (parent of meta/data when under /var/lib/garage, else meta parent)
+GARAGE_HOME="/var/lib/garage"
+if [[ "${GARAGE_META_DIR}" == /var/lib/garage/* && "${GARAGE_DATA_DIR}" == /var/lib/garage/* ]]; then
+  GARAGE_HOME="/var/lib/garage"
+else
+  GARAGE_HOME="$(dirname "${GARAGE_META_DIR}")"
 fi
 
-mkdir -p "${GARAGE_META_DIR}" "${GARAGE_DATA_DIR}"
-chown -R garage:garage /var/lib/garage
+if ! id -u garage >/dev/null 2>&1; then
+  useradd --system --home "${GARAGE_HOME}" --shell /usr/sbin/nologin garage
+fi
+
+mkdir -p "${GARAGE_META_DIR}" "${GARAGE_DATA_DIR}" "${GARAGE_HOME}"
+chown -R garage:garage "${GARAGE_META_DIR}" "${GARAGE_DATA_DIR}"
+# Also chown home when it is an ancestor (e.g. /var/lib/garage)
+if [[ "${GARAGE_META_DIR}" == "${GARAGE_HOME}"/* || "${GARAGE_DATA_DIR}" == "${GARAGE_HOME}"/* ]]; then
+  chown garage:garage "${GARAGE_HOME}" || true
+fi
+
+# systemd ReadWritePaths: unique configured dirs (+ home when used)
+GARAGE_READWRITE_PATHS="${GARAGE_META_DIR} ${GARAGE_DATA_DIR}"
+if [[ "${GARAGE_HOME}" != "${GARAGE_META_DIR}" && "${GARAGE_HOME}" != "${GARAGE_DATA_DIR}" ]]; then
+  GARAGE_READWRITE_PATHS="${GARAGE_HOME} ${GARAGE_READWRITE_PATHS}"
+fi
 
 if [[ -z "${GARAGE_RPC_SECRET:-}" ]]; then
   GARAGE_RPC_SECRET="$(openssl rand -hex 32 2>/dev/null || python3 -c 'import secrets; print(secrets.token_hex(32))')"
@@ -70,7 +88,13 @@ sed \
 chmod 0640 "${GARAGE_CONFIG_PATH}"
 chown root:garage "${GARAGE_CONFIG_PATH}"
 
-install -m 0644 "${ROOT_DIR}/garage/garage.service" /etc/systemd/system/garage.service
+sed \
+  -e "s|{{GARAGE_BIN_PATH}}|${GARAGE_BIN_PATH}|g" \
+  -e "s|{{GARAGE_CONFIG_PATH}}|${GARAGE_CONFIG_PATH}|g" \
+  -e "s|{{GARAGE_READWRITE_PATHS}}|${GARAGE_READWRITE_PATHS}|g" \
+  "${ROOT_DIR}/garage/garage.service" > /etc/systemd/system/garage.service
+chmod 0644 /etc/systemd/system/garage.service
+
 systemctl daemon-reload
 systemctl enable garage.service
 systemctl restart garage.service
@@ -89,4 +113,4 @@ done
 
 echo "==> Garage status:"
 "${GARAGE_BIN_PATH}" -c "${GARAGE_CONFIG_PATH}" status || true
-echo "OK: Garage installed. Next: sudo ./garage/bootstrap.sh"
+echo "OK: Garage installed (meta=${GARAGE_META_DIR} data=${GARAGE_DATA_DIR}). Next: sudo ./garage/bootstrap.sh"
